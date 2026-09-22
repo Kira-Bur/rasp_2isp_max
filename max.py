@@ -1,10 +1,11 @@
 import os
 import re
+import sys
 import json
 import sqlite3
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Tuple
 
 from maxapi import Bot, Dispatcher
@@ -21,10 +22,14 @@ logger = logging.getLogger("ISPDateBot")
 BOT_TOKEN = "ТОКЕН"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "schedule.db")
+MAIN_SCRIPT = os.path.join(BASE_DIR, "main.py")
 GROUP = "2 ИСП"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
+
+# Блокировка, чтобы нельзя было запустить два обновления одновременно
+_update_lock = asyncio.Lock()
 
 
 def get_all_dates() -> List[str]:
@@ -150,13 +155,48 @@ async def send_text(chat_id: int, text: str) -> bool:
         return False
 
 
+async def run_update() -> Tuple[bool, str]:
+    """
+    Запускает main.py как отдельный процесс.
+    Возвращает (успех, вывод_для_пользователя).
+    """
+    if not os.path.exists(MAIN_SCRIPT):
+        return False, f"Файл main.py не найден: {MAIN_SCRIPT}"
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, MAIN_SCRIPT,
+            cwd=BASE_DIR,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+
+        out = stdout.decode("utf-8", errors="replace").strip()
+        err = stderr.decode("utf-8", errors="replace").strip()
+
+        if process.returncode != 0:
+            logger.error(f"main.py завершился с кодом {process.returncode}\n{err}")
+            return False, f"Ошибка обновления (код {process.returncode}):\n{err[-1000:]}"
+
+        combined = err or out or "Готово, без вывода"
+        if len(combined) > 3500:
+            combined = combined[-3500:]
+
+        logger.info("main.py успешно выполнен")
+        return True, combined
+
+    except Exception as e:
+        logger.exception("Не удалось запустить main.py")
+        return False, f"Исключение при запуске: {e}"
+
+
 def resolve_date(arg: str) -> Optional[str]:
     arg = arg.strip().lower()
 
     if arg in ("today", "сегодня"):
         return datetime.now().strftime("%d.%m.%Y")
     if arg in ("tomorrow", "завтра"):
-        from datetime import timedelta
         return (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
 
     match = re.match(r"^(\d{1,2})[\.\-/](\d{1,2})(?:[\.\-/](\d{4}))?$", arg)
@@ -172,7 +212,6 @@ def resolve_date(arg: str) -> Optional[str]:
     except ValueError:
         return None
 
-
 @dp.message_created(Command("start"))
 async def cmd_start(event: MessageCreated):
     await event.message.answer(
@@ -182,7 +221,8 @@ async def cmd_start(event: MessageCreated):
             "/dates — список доступных дат\n"
             "/schedule ДД.ММ.ГГГГ — расписание на дату\n"
             "/today — расписание на сегодня\n"
-            "/tomorrow — расписание на завтра"
+            "/tomorrow — расписание на завтра\n"
+            "/update — обновить расписание из DOCX"
         )
     )
 
@@ -210,7 +250,6 @@ async def cmd_today(event: MessageCreated):
 
 @dp.message_created(Command("tomorrow"))
 async def cmd_tomorrow(event: MessageCreated):
-    from datetime import timedelta
     date_str = (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
     lessons = get_lessons(date_str)
 
@@ -256,6 +295,24 @@ async def cmd_schedule(event: MessageCreated):
 
     await event.message.answer(text=format_schedule(date_str, lessons))
 
+
+@dp.message_created(Command("update"))
+async def cmd_update(event: MessageCreated):
+    if _update_lock.locked():
+        await event.message.answer(
+            text="⏳ Обновление уже выполняется, подождите..."
+        )
+        return
+
+    async with _update_lock:
+        await event.message.answer(
+            text="⏳ Запускаю обновление расписания..."
+        )
+
+        ok, output = await run_update()
+
+        prefix = "✅ Обновление завершено" if ok else "❌ Ошибка обновления"
+        await event.message.answer(text=f"{prefix}:\n\n{output}")
 
 async def main():
     logger.info("Запуск MAX бота расписания")
