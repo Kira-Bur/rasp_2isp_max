@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ISPDateBot")
 
-BOT_TOKEN = "ТОКЕН"
+BOT_TOKEN = "TOKEN"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "schedule.db")
 MAIN_SCRIPT = os.path.join(BASE_DIR, "main.py")
@@ -28,7 +28,6 @@ GROUP = "2 ИСП"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# Блокировка, чтобы нельзя было запустить два обновления одновременно
 _update_lock = asyncio.Lock()
 
 
@@ -156,10 +155,6 @@ async def send_text(chat_id: int, text: str) -> bool:
 
 
 async def run_update() -> Tuple[bool, str]:
-    """
-    Запускает main.py как отдельный процесс.
-    Возвращает (успех, вывод_для_пользователя).
-    """
     if not os.path.exists(MAIN_SCRIPT):
         return False, f"Файл main.py не найден: {MAIN_SCRIPT}"
 
@@ -211,6 +206,7 @@ def resolve_date(arg: str) -> Optional[str]:
         return datetime(year, month, day).strftime("%d.%m.%Y")
     except ValueError:
         return None
+
 
 @dp.message_created(Command("start"))
 async def cmd_start(event: MessageCreated):
@@ -313,6 +309,7 @@ async def cmd_update(event: MessageCreated):
 
         prefix = "✅ Обновление завершено" if ok else "❌ Ошибка обновления"
         await event.message.answer(text=f"{prefix}:\n\n{output}")
+
 
 async def main():
     logger.info("Запуск MAX бота расписания")
