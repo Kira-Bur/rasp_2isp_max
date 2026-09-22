@@ -296,18 +296,18 @@ async def cmd_schedule(event: MessageCreated):
 async def cmd_update(event: MessageCreated):
     if _update_lock.locked():
         await event.message.answer(
-            text="⏳ Обновление уже выполняется, подождите..."
+            text="Обновление уже выполняется, подождите..."
         )
         return
 
     async with _update_lock:
         await event.message.answer(
-            text="⏳ Запускаю обновление расписания..."
+            text="Запускаю обновление расписания..."
         )
 
         ok, output = await run_update()
 
-        prefix = "✅ Обновление завершено" if ok else "❌ Ошибка обновления"
+        prefix = "Обновление завершено" if ok else "Ошибка обновления"
         await event.message.answer(text=f"{prefix}:\n\n{output}")
 
 
